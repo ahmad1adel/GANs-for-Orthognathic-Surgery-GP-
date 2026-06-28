@@ -1,0 +1,22 @@
+# Model checkpoints (large binary files)
+*.pth
+*.pt
+*.ckpt
+
+# Dataset images (stored locally / shared separately)
+dataset/
+
+# GAN saved models and samples
+saved_model/
+jaw_pix2pix_checkpoints/
+training_samples/
+cell_images/
+
+# Python
+__pycache__/
+*.pyc
+.ipynb_checkpoints/
+
+# OS
+.DS_Store
+Thumbs.db
