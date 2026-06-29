@@ -6,8 +6,7 @@
 # Dataset images (stored locally / shared separately)
 dataset/
 
-# GAN saved models and samples
-saved_model/
+# GAN checkpoints (intermediate, not final)
 jaw_pix2pix_checkpoints/
 training_samples/
 cell_images/
