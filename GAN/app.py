@@ -3,13 +3,17 @@ import io
 import base64
 import numpy as np
 import tensorflow as tf
+import replicate
+import requests as http_requests
 from PIL import Image
 from flask import Flask, render_template, request, jsonify
+from dotenv import load_dotenv
+
+load_dotenv()  # reads REPLICATE_API_TOKEN from .env
 
 app = Flask(__name__)
 app.config['MAX_CONTENT_LENGTH'] = 16 * 1024 * 1024  # 16 MB
 
-# Model path — one level up from this file
 BASE_DIR   = os.path.dirname(os.path.abspath(__file__))
 MODEL_PATH = os.path.join(BASE_DIR, '..', 'saved_model', 'generator.keras')
 IMG_SIZE   = 256
@@ -43,24 +47,40 @@ print('Model ready.')
 
 # ── Image helpers ─────────────────────────────────────────────────────────────
 def preprocess(image_bytes):
-    """Raw image bytes → grayscale 256×256 tensor in [-1, 1]."""
     img = Image.open(io.BytesIO(image_bytes)).convert('L').resize((IMG_SIZE, IMG_SIZE))
-    arr = np.array(img, dtype=np.float32) / 255.0   # [0, 1]
-    arr = arr * 2.0 - 1.0                            # [-1, 1]
+    arr = np.array(img, dtype=np.float32) / 255.0
+    arr = arr * 2.0 - 1.0
     tensor = tf.expand_dims(arr[..., np.newaxis], axis=0)
     return tensor, img
 
 
 def postprocess(tensor):
-    """Model output tensor → uint8 PIL image."""
     arr = tensor[0].numpy().squeeze()
     arr = np.clip(arr * 0.5 + 0.5, 0, 1)
     arr = (arr * 255).astype(np.uint8)
     return Image.fromarray(arr, mode='L')
 
 
+def enhance_with_gfpgan(pil_img):
+    """Send GAN output to GFPGAN via Replicate for face restoration."""
+    rgb_img = pil_img.convert('RGB')
+    buf = io.BytesIO()
+    rgb_img.save(buf, format='PNG')
+    buf.seek(0)
+
+    output = replicate.run(
+        "tencentarc/gfpgan",
+        input={"img": buf, "version": "1.4", "scale": 2}
+    )
+
+    url = str(output)
+    resp = http_requests.get(url, timeout=60)
+    resp.raise_for_status()
+    enhanced = Image.open(io.BytesIO(resp.content)).convert('RGB')
+    return enhanced
+
+
 def pil_to_b64(img):
-    """PIL image → base64-encoded PNG string."""
     buf = io.BytesIO()
     img.save(buf, format='PNG')
     return base64.b64encode(buf.getvalue()).decode('utf-8')
@@ -89,11 +109,13 @@ def predict():
         image_bytes          = file.read()
         input_tensor, in_img = preprocess(image_bytes)
         output_tensor        = generator(input_tensor, training=False)
-        out_img              = postprocess(output_tensor)
+        gan_img              = postprocess(output_tensor)
+        enhanced_img         = enhance_with_gfpgan(gan_img)
 
         return jsonify({
-            'before': pil_to_b64(in_img),
-            'after':  pil_to_b64(out_img),
+            'before':   pil_to_b64(in_img),
+            'after':    pil_to_b64(gan_img),
+            'enhanced': pil_to_b64(enhanced_img),
         })
 
     except Exception as e:
