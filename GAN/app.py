@@ -3,13 +3,8 @@ import io
 import base64
 import numpy as np
 import tensorflow as tf
-import replicate
-import requests as http_requests
-from PIL import Image
+from PIL import Image, ImageEnhance, ImageFilter
 from flask import Flask, render_template, request, jsonify
-from dotenv import load_dotenv
-
-load_dotenv()  # reads REPLICATE_API_TOKEN from .env
 
 app = Flask(__name__)
 app.config['MAX_CONTENT_LENGTH'] = 16 * 1024 * 1024  # 16 MB
@@ -61,23 +56,27 @@ def postprocess(tensor):
     return Image.fromarray(arr, mode='L')
 
 
-def enhance_with_gfpgan(pil_img):
-    """Enhance GAN output via Real-ESRGAN (with face enhancement) on Replicate."""
-    rgb_img = pil_img.convert('RGB')
-    buf = io.BytesIO()
-    rgb_img.save(buf, format='PNG')
-    buf.seek(0)
+def enhance_locally(pil_img):
+    """Free local enhancement: 2x upscale + denoise + sharpen + contrast boost."""
+    img = pil_img.convert('RGB')
 
-    output = replicate.run(
-        "nightmareai/real-esrgan:42fed1c4974146d4d2414e2be2c5277c7fcf05fcc3a73abf41610695738c1d7b",
-        input={"image": buf, "scale": 2, "face_enhance": True}
-    )
+    # 2x upscale with high-quality Lanczos resampling
+    w, h = img.size
+    img = img.resize((w * 2, h * 2), Image.LANCZOS)
 
-    url = str(output)
-    resp = http_requests.get(url, timeout=60)
-    resp.raise_for_status()
-    enhanced = Image.open(io.BytesIO(resp.content)).convert('RGB')
-    return enhanced
+    # Gentle denoise pass
+    img = img.filter(ImageFilter.MedianFilter(size=3))
+
+    # Unsharp mask — sharpens edges without noise amplification
+    img = img.filter(ImageFilter.UnsharpMask(radius=2, percent=150, threshold=3))
+
+    # Slight contrast boost
+    img = ImageEnhance.Contrast(img).enhance(1.25)
+
+    # Slight brightness correction
+    img = ImageEnhance.Brightness(img).enhance(1.05)
+
+    return img
 
 
 def pil_to_b64(img):
@@ -110,7 +109,7 @@ def predict():
         input_tensor, in_img = preprocess(image_bytes)
         output_tensor        = generator(input_tensor, training=False)
         gan_img              = postprocess(output_tensor)
-        enhanced_img         = enhance_with_gfpgan(gan_img)
+        enhanced_img         = enhance_locally(gan_img)
 
         return jsonify({
             'before':   pil_to_b64(in_img),
