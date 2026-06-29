@@ -8,8 +8,6 @@ from PIL import Image, ImageEnhance, ImageFilter
 from flask import Flask, render_template, request, jsonify
 from dotenv import load_dotenv
 
-load_dotenv()
-
 app = Flask(__name__)
 app.config['MAX_CONTENT_LENGTH'] = 16 * 1024 * 1024  # 16 MB
 
@@ -17,7 +15,10 @@ BASE_DIR   = os.path.dirname(os.path.abspath(__file__))
 MODEL_PATH = os.path.join(BASE_DIR, '..', 'saved_model', 'generator.keras')
 IMG_SIZE   = 256
 
+# Load .env from the same folder as this script
+load_dotenv(os.path.join(BASE_DIR, '.env'))
 STABILITY_API_KEY = os.environ.get('STABILITY_API_KEY')
+print(f'Stability API key loaded: {"YES" if STABILITY_API_KEY else "MISSING"}')
 
 
 # ── Custom layer needed to load the Keras model ───────────────────────────────
