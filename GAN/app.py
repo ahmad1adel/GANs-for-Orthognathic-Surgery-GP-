@@ -3,8 +3,12 @@ import io
 import base64
 import numpy as np
 import tensorflow as tf
+import requests as http_requests
 from PIL import Image, ImageEnhance, ImageFilter
 from flask import Flask, render_template, request, jsonify
+from dotenv import load_dotenv
+
+load_dotenv()
 
 app = Flask(__name__)
 app.config['MAX_CONTENT_LENGTH'] = 16 * 1024 * 1024  # 16 MB
@@ -12,6 +16,8 @@ app.config['MAX_CONTENT_LENGTH'] = 16 * 1024 * 1024  # 16 MB
 BASE_DIR   = os.path.dirname(os.path.abspath(__file__))
 MODEL_PATH = os.path.join(BASE_DIR, '..', 'saved_model', 'generator.keras')
 IMG_SIZE   = 256
+
+STABILITY_API_KEY = os.environ.get('STABILITY_API_KEY')
 
 
 # ── Custom layer needed to load the Keras model ───────────────────────────────
@@ -56,27 +62,51 @@ def postprocess(tensor):
     return Image.fromarray(arr, mode='L')
 
 
-def enhance_locally(pil_img):
-    """Free local enhancement: 2x upscale + denoise + sharpen + contrast boost."""
-    img = pil_img.convert('RGB')
+def enhance_with_stability(pil_img):
+    """Send GAN output to Stability AI img2img to generate a realistic face."""
+    # Upscale to 512×512 RGB — native resolution for Stable Diffusion
+    rgb_img = pil_img.convert('RGB').resize((512, 512), Image.LANCZOS)
 
-    # 2x upscale with high-quality Lanczos resampling
-    w, h = img.size
-    img = img.resize((w * 2, h * 2), Image.LANCZOS)
+    buf = io.BytesIO()
+    rgb_img.save(buf, format='PNG')
+    img_bytes = buf.getvalue()
 
-    # Gentle denoise pass
-    img = img.filter(ImageFilter.MedianFilter(size=3))
+    response = http_requests.post(
+        "https://api.stability.ai/v1/generation/stable-diffusion-v1-6/image-to-image",
+        headers={
+            "Authorization": f"Bearer {STABILITY_API_KEY}",
+            "Accept": "application/json",
+        },
+        files={
+            "init_image": ("image.png", img_bytes, "image/png"),
+        },
+        data={
+            "image_strength":         "0.40",
+            "init_image_mode":        "IMAGE_STRENGTH",
+            "text_prompts[0][text]":  (
+                "realistic human face profile view, photorealistic portrait, "
+                "natural skin texture, clear facial features, orthognathic surgery result, "
+                "side profile, professional medical photography"
+            ),
+            "text_prompts[0][weight]": "1",
+            "text_prompts[1][text]":  (
+                "blurry, cartoon, anime, distorted, low quality, x-ray, dark, noise, ugly"
+            ),
+            "text_prompts[1][weight]": "-1",
+            "cfg_scale": "7",
+            "samples":   "1",
+            "steps":     "40",
+        },
+        timeout=60,
+    )
 
-    # Unsharp mask — sharpens edges without noise amplification
-    img = img.filter(ImageFilter.UnsharpMask(radius=2, percent=150, threshold=3))
+    if response.status_code != 200:
+        raise Exception(f"Stability AI error {response.status_code}: {response.text}")
 
-    # Slight contrast boost
-    img = ImageEnhance.Contrast(img).enhance(1.25)
-
-    # Slight brightness correction
-    img = ImageEnhance.Brightness(img).enhance(1.05)
-
-    return img
+    data = response.json()
+    image_b64  = data["artifacts"][0]["base64"]
+    image_data = base64.b64decode(image_b64)
+    return Image.open(io.BytesIO(image_data)).convert('RGB')
 
 
 def pil_to_b64(img):
@@ -109,7 +139,7 @@ def predict():
         input_tensor, in_img = preprocess(image_bytes)
         output_tensor        = generator(input_tensor, training=False)
         gan_img              = postprocess(output_tensor)
-        enhanced_img         = enhance_locally(gan_img)
+        enhanced_img         = enhance_with_stability(gan_img)
 
         return jsonify({
             'before':   pil_to_b64(in_img),
