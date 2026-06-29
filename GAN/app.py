@@ -63,50 +63,41 @@ def postprocess(tensor):
 
 
 def enhance_with_stability(pil_img):
-    """Send GAN output to Stability AI img2img to generate a realistic face."""
-    # Upscale to 512×512 RGB — native resolution for Stable Diffusion
-    rgb_img = pil_img.convert('RGB').resize((512, 512), Image.LANCZOS)
+    """Generate realistic face from GAN output using Stability AI v2beta structure control."""
+    rgb_img = pil_img.convert('RGB').resize((1024, 1024), Image.LANCZOS)
 
     buf = io.BytesIO()
     rgb_img.save(buf, format='PNG')
-    img_bytes = buf.getvalue()
+    buf.seek(0)
 
     response = http_requests.post(
-        "https://api.stability.ai/v1/generation/stable-diffusion-v1-6/image-to-image",
+        "https://api.stability.ai/v2beta/stable-image/control/structure",
         headers={
             "Authorization": f"Bearer {STABILITY_API_KEY}",
-            "Accept": "application/json",
+            "Accept": "image/*",
         },
         files={
-            "init_image": ("image.png", img_bytes, "image/png"),
+            "image": ("image.png", buf, "image/png"),
         },
         data={
-            "image_strength":         "0.40",
-            "init_image_mode":        "IMAGE_STRENGTH",
-            "text_prompts[0][text]":  (
+            "prompt": (
                 "realistic human face profile view, photorealistic portrait, "
-                "natural skin texture, clear facial features, orthognathic surgery result, "
-                "side profile, professional medical photography"
+                "natural skin texture, clear facial features, side profile, "
+                "professional portrait photography, high detail, 8k"
             ),
-            "text_prompts[0][weight]": "1",
-            "text_prompts[1][text]":  (
-                "blurry, cartoon, anime, distorted, low quality, x-ray, dark, noise, ugly"
+            "negative_prompt": (
+                "blurry, cartoon, anime, distorted, low quality, x-ray, noise, ugly, deformed"
             ),
-            "text_prompts[1][weight]": "-1",
-            "cfg_scale": "7",
-            "samples":   "1",
-            "steps":     "40",
+            "control_strength": "0.7",
+            "output_format":    "png",
         },
-        timeout=60,
+        timeout=90,
     )
 
     if response.status_code != 200:
         raise Exception(f"Stability AI error {response.status_code}: {response.text}")
 
-    data = response.json()
-    image_b64  = data["artifacts"][0]["base64"]
-    image_data = base64.b64decode(image_b64)
-    return Image.open(io.BytesIO(image_data)).convert('RGB')
+    return Image.open(io.BytesIO(response.content)).convert('RGB')
 
 
 def pil_to_b64(img):
