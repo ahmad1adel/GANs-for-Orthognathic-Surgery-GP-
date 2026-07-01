@@ -65,7 +65,9 @@ def postprocess(tensor):
 
 def enhance_with_stability(pil_img):
     """Generate realistic face from GAN output using Stability AI v2beta structure control."""
-    rgb_img = pil_img.convert('RGB').resize((1024, 1024), Image.LANCZOS)
+    # Sharpen first so structure control gets clean edges to follow
+    sharpened = pil_img.filter(ImageFilter.UnsharpMask(radius=2, percent=180, threshold=2))
+    rgb_img = sharpened.convert('RGB').resize((1024, 1024), Image.LANCZOS)
 
     buf = io.BytesIO()
     rgb_img.save(buf, format='PNG')
@@ -82,14 +84,23 @@ def enhance_with_stability(pil_img):
         },
         data={
             "prompt": (
-                "realistic human face profile view, photorealistic portrait, "
-                "natural skin texture, clear facial features, side profile, "
-                "professional portrait photography, high detail, 8k"
+                "Medical facial reconstruction simulation. "
+                "Keep the same person's identity and head orientation. "
+                "Preserve the skull size and facial proportions. "
+                "Improve the mandibular region as if successful orthognathic surgery was performed. "
+                "Advance the lower jaw to a normal anatomical position. "
+                "Improve chin projection. Create a smooth jawline. "
+                "Improve the cervicomental angle. Maintain realistic soft tissue. "
+                "Do not change the nose, forehead, ears, hairstyle or eyes. "
+                "Preserve grayscale medical appearance. High anatomical realism. Not artistic. "
+                "Black and white medical photography, side profile view, same male person."
             ),
             "negative_prompt": (
-                "blurry, cartoon, anime, distorted, low quality, x-ray, noise, ugly, deformed"
+                "color, colorized, artistic, cartoon, anime, distorted, low quality, "
+                "noise, ugly, deformed, female, woman, gender change, different person, "
+                "studio glamour, makeup, beautified, blurry, unrealistic"
             ),
-            "control_strength": "0.7",
+            "control_strength": "0.9",
             "output_format":    "png",
         },
         timeout=90,
@@ -98,7 +109,9 @@ def enhance_with_stability(pil_img):
     if response.status_code != 200:
         raise Exception(f"Stability AI error {response.status_code}: {response.text}")
 
-    return Image.open(io.BytesIO(response.content)).convert('RGB')
+    # Convert to grayscale to match medical black & white appearance
+    result = Image.open(io.BytesIO(response.content)).convert('L').convert('RGB')
+    return result
 
 
 def pil_to_b64(img):
