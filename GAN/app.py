@@ -15,7 +15,6 @@ BASE_DIR   = os.path.dirname(os.path.abspath(__file__))
 MODEL_PATH = os.path.join(BASE_DIR, '..', 'saved_model', 'generator.keras')
 IMG_SIZE   = 256
 
-# Load .env from the same folder as this script
 load_dotenv(os.path.join(BASE_DIR, '.env'))
 STABILITY_API_KEY = os.environ.get('STABILITY_API_KEY')
 print(f'Stability API key loaded: {"YES" if STABILITY_API_KEY else "MISSING"}')
@@ -63,18 +62,23 @@ def postprocess(tensor):
     return Image.fromarray(arr, mode='L')
 
 
-def enhance_with_stability(pil_img):
-    """Generate realistic face from GAN output using Stability AI v2beta structure control."""
-    # Sharpen first so structure control gets clean edges to follow
-    sharpened = pil_img.filter(ImageFilter.UnsharpMask(radius=2, percent=180, threshold=2))
-    rgb_img = sharpened.convert('RGB').resize((1024, 1024), Image.LANCZOS)
+def enhance_from_original(original_pil):
+    """
+    Realistic 'after surgery' result via Stability img2img.
+
+    Runs on the ORIGINAL clean photo (not the blurry GAN output) at low strength,
+    so the real person, hair and grayscale look are preserved and only the jaw /
+    chin profile is refined.
+    """
+    # Square, decent resolution; keep original detail
+    rgb_img = original_pil.convert('RGB').resize((1024, 1024), Image.LANCZOS)
 
     buf = io.BytesIO()
     rgb_img.save(buf, format='PNG')
     buf.seek(0)
 
     response = http_requests.post(
-        "https://api.stability.ai/v2beta/stable-image/control/structure",
+        "https://api.stability.ai/v2beta/stable-image/generate/sd3",
         headers={
             "Authorization": f"Bearer {STABILITY_API_KEY}",
             "Accept": "image/*",
@@ -84,34 +88,29 @@ def enhance_with_stability(pil_img):
         },
         data={
             "prompt": (
-                "Medical facial reconstruction simulation. "
-                "Keep the same person's identity and head orientation. "
-                "Preserve the skull size and facial proportions. "
-                "Improve the mandibular region as if successful orthognathic surgery was performed. "
-                "Advance the lower jaw to a normal anatomical position. "
-                "Improve chin projection. Create a smooth jawline. "
-                "Improve the cervicomental angle. Maintain realistic soft tissue. "
-                "Do not change the nose, forehead, ears, hairstyle or eyes. "
-                "Preserve grayscale medical appearance. High anatomical realism. Not artistic. "
-                "Black and white medical photography, side profile view, same male person."
+                "same young man, side profile portrait, black and white photograph, "
+                "stronger and more forward lower jaw, better chin projection, "
+                "smooth defined jawline, balanced facial profile, "
+                "realistic skin, sharp focus, studio lighting, "
+                "keep the same hairstyle, nose, forehead, ear and eye"
             ),
             "negative_prompt": (
-                "color, colorized, artistic, cartoon, anime, distorted, low quality, "
-                "noise, ugly, deformed, female, woman, gender change, different person, "
-                "studio glamour, makeup, beautified, blurry, unrealistic"
+                "woman, female, different person, cartoon, anime, painting, sketch, "
+                "skull, x-ray, deformed, distorted, blurry, extra face, color, colorized"
             ),
-            "control_strength": "0.9",
-            "output_format":    "png",
+            "mode":          "image-to-image",
+            "strength":      "0.35",
+            "model":         "sd3.5-large-turbo",
+            "output_format": "png",
         },
         timeout=90,
     )
 
     if response.status_code != 200:
-        raise Exception(f"Stability AI error {response.status_code}: {response.text}")
+        raise Exception(f"Stability AI error {response.status_code}: {response.text[:300]}")
 
-    # Convert to grayscale to match medical black & white appearance
-    result = Image.open(io.BytesIO(response.content)).convert('L').convert('RGB')
-    return result
+    # Grayscale to match the medical black & white style
+    return Image.open(io.BytesIO(response.content)).convert('L').convert('RGB')
 
 
 def pil_to_b64(img):
@@ -141,10 +140,16 @@ def predict():
 
     try:
         image_bytes          = file.read()
+
+        # Keep a clean, full-detail copy of the original for the realistic edit
+        original_img         = Image.open(io.BytesIO(image_bytes)).convert('RGB')
+
         input_tensor, in_img = preprocess(image_bytes)
         output_tensor        = generator(input_tensor, training=False)
         gan_img              = postprocess(output_tensor)
-        enhanced_img         = enhance_with_stability(gan_img)
+
+        # Realistic result is edited from the ORIGINAL photo, not the blurry GAN output
+        enhanced_img         = enhance_from_original(original_img)
 
         return jsonify({
             'before':   pil_to_b64(in_img),
