@@ -3,10 +3,8 @@ import io
 import base64
 import numpy as np
 import tensorflow as tf
-import requests as http_requests
-from PIL import Image, ImageEnhance, ImageFilter
+from PIL import Image, ImageEnhance, ImageFilter, ImageOps
 from flask import Flask, render_template, request, jsonify
-from dotenv import load_dotenv
 
 app = Flask(__name__)
 app.config['MAX_CONTENT_LENGTH'] = 16 * 1024 * 1024  # 16 MB
@@ -14,10 +12,6 @@ app.config['MAX_CONTENT_LENGTH'] = 16 * 1024 * 1024  # 16 MB
 BASE_DIR   = os.path.dirname(os.path.abspath(__file__))
 MODEL_PATH = os.path.join(BASE_DIR, '..', 'saved_model', 'generator.keras')
 IMG_SIZE   = 256
-
-load_dotenv(os.path.join(BASE_DIR, '.env'))
-STABILITY_API_KEY = os.environ.get('STABILITY_API_KEY')
-print(f'Stability API key loaded: {"YES" if STABILITY_API_KEY else "MISSING"}')
 
 
 # ── Custom layer needed to load the Keras model ───────────────────────────────
@@ -64,53 +58,31 @@ def postprocess(tensor):
 
 def enhance_from_original(original_pil):
     """
-    Realistic 'after surgery' result via Stability img2img.
+    Local 'after surgery' enhancement — no external API, runs instantly.
 
-    Runs on the ORIGINAL clean photo (not the blurry GAN output) at low strength,
-    so the real person, hair and grayscale look are preserved and only the jaw /
-    chin profile is refined.
+    Works on the ORIGINAL clean photo: converts to grayscale medical style,
+    upscales, denoises, sharpens and balances tone for a crisp result.
     """
-    # Square, decent resolution; keep original detail
-    rgb_img = original_pil.convert('RGB').resize((1024, 1024), Image.LANCZOS)
+    # Grayscale medical look, keep it as a single-channel working image
+    img = original_pil.convert('L')
 
-    buf = io.BytesIO()
-    rgb_img.save(buf, format='PNG')
-    buf.seek(0)
+    # Auto-contrast so the tonal range fills black→white cleanly
+    img = ImageOps.autocontrast(img, cutoff=1)
 
-    response = http_requests.post(
-        "https://api.stability.ai/v2beta/stable-image/generate/sd3",
-        headers={
-            "Authorization": f"Bearer {STABILITY_API_KEY}",
-            "Accept": "image/*",
-        },
-        files={
-            "image": ("image.png", buf, "image/png"),
-        },
-        data={
-            "prompt": (
-                "same young man, side profile portrait, black and white photograph, "
-                "stronger and more forward lower jaw, better chin projection, "
-                "smooth defined jawline, balanced facial profile, "
-                "realistic skin, sharp focus, studio lighting, "
-                "keep the same hairstyle, nose, forehead, ear and eye"
-            ),
-            "negative_prompt": (
-                "woman, female, different person, cartoon, anime, painting, sketch, "
-                "skull, x-ray, deformed, distorted, blurry, extra face, color, colorized"
-            ),
-            "mode":          "image-to-image",
-            "strength":      "0.35",
-            "model":         "sd3.5-large-turbo",
-            "output_format": "png",
-        },
-        timeout=90,
-    )
+    # 2x upscale with high-quality Lanczos resampling
+    w, h = img.size
+    img = img.resize((w * 2, h * 2), Image.LANCZOS)
 
-    if response.status_code != 200:
-        raise Exception(f"Stability AI error {response.status_code}: {response.text[:300]}")
+    # Gentle denoise, then sharpen edges (jawline / profile) without adding noise
+    img = img.filter(ImageFilter.MedianFilter(size=3))
+    img = img.filter(ImageFilter.UnsharpMask(radius=2, percent=160, threshold=2))
 
-    # Grayscale to match the medical black & white style
-    return Image.open(io.BytesIO(response.content)).convert('L').convert('RGB')
+    # Slight contrast + brightness polish
+    img = ImageEnhance.Contrast(img).enhance(1.15)
+    img = ImageEnhance.Brightness(img).enhance(1.03)
+
+    # Return as RGB so the browser and downloads behave consistently
+    return img.convert('RGB')
 
 
 def pil_to_b64(img):

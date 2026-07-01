@@ -351,16 +351,16 @@
 
 <!-- Header -->
 <div class="header">
-  <div class="badge">Pix2Pix GAN + Stability AI</div>
+  <div class="badge">Pix2Pix GAN + Enhancement</div>
   <h1>Orthognathic Surgery<br>Outcome Prediction</h1>
-  <p>Upload a <strong>before surgery</strong> profile image. The GAN predicts the post-surgery result, then Stability AI renders it as a <strong>realistic face</strong>.</p>
+  <p>Upload a <strong>before surgery</strong> profile image. The GAN predicts the post-surgery result, then local enhancement produces a <strong>clean, sharp</strong> output.</p>
 
   <div class="pipeline-badge">
     <span class="pipeline-tag tag-gan">Input Image</span>
     <span class="tag-arrow">→</span>
     <span class="pipeline-tag tag-gan">Pix2Pix GAN</span>
     <span class="tag-arrow">→</span>
-    <span class="pipeline-tag tag-gfpgan">Realistic Render</span>
+    <span class="pipeline-tag tag-gfpgan">Local Enhancement</span>
     <span class="tag-arrow">→</span>
     <span class="pipeline-tag" style="background:#064e3b;color:#6ee7b7;border:1px solid #05966944">Final Output</span>
   </div>
@@ -389,7 +389,7 @@
 <!-- Spinner -->
 <div class="spinner-wrap" id="spinner">
   <div class="spinner"></div>
-  <p>Processing — GAN + Stability AI rendering (~20–40 seconds)…</p>
+  <p>Processing — GAN inference + enhancement (a few seconds)…</p>
   <div class="spinner-steps">
     <div class="step"><div class="step-dot"></div> GAN inference</div>
     <div class="step"><div class="step-dot"></div> GFPGAN enhancement</div>
@@ -422,7 +422,7 @@
 
     <div class="arrow-col">
       <div class="arrow-icon green">→</div>
-      <div class="arrow-label">Stability<br>AI</div>
+      <div class="arrow-label">Enhance<br>+ Sharpen</div>
     </div>
 
     <div class="result-card enhanced">
